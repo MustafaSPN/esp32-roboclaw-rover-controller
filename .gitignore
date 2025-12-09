@@ -1,0 +1,7 @@
+# Arduino ve VS Code gereksizleri
+.vscode/
+build/
+*.elf
+*.hex
+*.bin
+*.map
