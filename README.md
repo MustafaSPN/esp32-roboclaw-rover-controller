@@ -77,6 +77,7 @@ You can adjust physical robot parameters at the top of the `.ino` file:
 #define TRACK_WIDTH      0.55    // Distance between wheels (Meters)
 #define TICKS_PER_REV    145.6   // Encoder ticks per revolution
 #define LEFT_MOTOR_IS_M1 false   // Swap motor mapping if needed
+```
 
 ## 🚀 How to Run
 
@@ -99,7 +100,7 @@ You can adjust physical robot parameters at the top of the `.ino` file:
 To compile this code, you need the following libraries installed in Arduino IDE or PlatformIO:
 
 * [micro_ros_arduino](https://github.com/micro-ROS/micro_ros_arduino)
-* [RoboClaw](https://github.com/orionrobots/RoboClaw) (BasicMicro)
+* [RoboClaw](https://github.com/basicmicro/roboclaw_arduino_library) (BasicMicro)
 * [Adafruit_NeoPixel](https://github.com/adafruit/Adafruit_NeoPixel)
 
 ---
