@@ -75,6 +75,8 @@ double theta = 0.0;
 int32_t last_enc_left = 0;
 int32_t last_enc_right = 0;
 
+bool isMoving = false;
+
 unsigned long last_cmd_vel_time = 0;
 unsigned long last_connected_check_time = 0;
 
@@ -126,6 +128,10 @@ void cmd_vel_callback(const void * msgin) {
   int32_t qpps_right = (int32_t)(v_right * TICKS_PER_METER);
 
   // LEFT_MOTOR_IS_M1 ayarına göre motorları sür
+  if(!isMoving){
+    qpps_left *= 10;
+    qpps_right *= 10;
+  }
   if (LEFT_MOTOR_IS_M1) {
     roboclaw.SpeedM1M2(RC_ADDRESS, qpps_left, qpps_right);
   } else {
@@ -161,7 +167,12 @@ void publish_odometry_callback(rcl_timer_t * timer, int64_t last_call_time) {
        // Hız verisi gelmediyse (valid false ise) 0 kabul et, ama yayını durdurma!
        if(!valid_spd_m1) spd_m1 = 0; 
        if(!valid_spd_m2) spd_m2 = 0;
-
+      
+       if(spd_m1 !=0 || spd_m2 !=0){
+        isMoving = true;
+       }else{
+        isMoving = false;
+       }
        if (LEFT_MOTOR_IS_M1) {
           current_enc_left = enc_m1; current_enc_right = enc_m2;
           current_spd_left = spd_m1; current_spd_right = spd_m2;
