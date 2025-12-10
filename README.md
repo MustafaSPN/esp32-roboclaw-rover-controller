@@ -74,7 +74,7 @@ You can adjust physical robot parameters at the top of the `.ino` file:
 
 ```cpp
 #define WHEEL_DIA        0.192   // Wheel Diameter (Meters)
-#define TRACK_WIDTH      0.55    // Distance between wheels (Meters)
+#define TRACK_WIDTH      0.495    // Distance between wheels (Meters)
 #define TICKS_PER_REV    145.6   // Encoder ticks per revolution
 #define LEFT_MOTOR_IS_M1 false   // Swap motor mapping if needed
 ```
