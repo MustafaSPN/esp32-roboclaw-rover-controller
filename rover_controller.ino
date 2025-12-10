@@ -27,7 +27,7 @@
 #define CONNECTED_CHECK_TIMEOUT_MS 1000
 // --- ROBOT FİZİKSEL ÖZELLİKLERİ ---
 #define WHEEL_DIA        0.192   // Tekerlek Çapı (Metre)
-#define TRACK_WIDTH      0.55    // İki teker arası mesafe (Metre)
+#define TRACK_WIDTH      0.495    // İki teker arası mesafe (Metre)
 #define TICKS_PER_REV    145.6  // BİR TURDAKİ TICK SAYISI 
 
 // Otomatik Hesaplanan Değer (Buna dokunma)
