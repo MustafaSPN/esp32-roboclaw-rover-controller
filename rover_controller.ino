@@ -233,23 +233,25 @@ void publish_odometry_callback(rcl_timer_t * timer, int64_t last_call_time) {
          double v_r_ms = (double)current_spd_right / TICKS_PER_METER;
          
          odom_msg.twist.twist.linear.x = (v_r_ms + v_l_ms) / 2.0;
+         odom_msg.twist.twist.linear.y = 0.0;
          odom_msg.twist.twist.angular.z = (v_r_ms - v_l_ms) / TRACK_WIDTH;
+        // POSE: 9999 hack'ini kaldır. (Pose'u zaten EKF'de fuse etmeyeceksin.)
+          odom_msg.pose.covariance[0]  = 0.0; // X
+          odom_msg.pose.covariance[7]  = 0.0; // Y
+          odom_msg.pose.covariance[14] = 0.0; // Z
+          odom_msg.pose.covariance[21] = 0.0; // Roll
+          odom_msg.pose.covariance[28] = 0.0; // Pitch
+          odom_msg.pose.covariance[35] = 0.0; // Yaw
 
-         odom_msg.pose.covariance[0]  = 0.01; // X pozisyonuna güven (Metre karesi)
-          odom_msg.pose.covariance[7]  = 0.01; // Y pozisyonuna güven
-          odom_msg.pose.covariance[14] = 99999.0; // Z (Yukarı gitmiyoruz, güvenme)
-          odom_msg.pose.covariance[21] = 99999.0; // Roll
-          odom_msg.pose.covariance[28] = 99999.0; // Pitch
-          odom_msg.pose.covariance[35] = 0.03; // Yaw (Dönüş) - Kayma olabileceği için biraz daha yüksek
+          // TWIST: sadece güvendiklerin küçük; vy'yi küçük yapma (fuse etmeyeceğiz)
+          odom_msg.twist.covariance[0]  = 0.0025; // vx
+          odom_msg.twist.covariance[7]  = 9999.0; // vy  (0 basıyoruz ama ÖLÇMÜYORUZ)
+          odom_msg.twist.covariance[35] = 0.0025; // vyaw
 
-          // Twist (Hız) Kovaryansı
-          odom_msg.twist.covariance[0]  = 0.01; // X Hızı
-          odom_msg.twist.covariance[7]  = 0.01; // Y Hızı (Kayma yoksa 0'dır ama düşük varyans iyidir)
-          odom_msg.twist.covariance[14] = 99999.0;
-          odom_msg.twist.covariance[21] = 99999.0;
-          odom_msg.twist.covariance[28] = 99999.0;
-          odom_msg.twist.covariance[35] = 0.03; // Yaw Hızı
-         
+          // Ölçmediklerimiz
+          odom_msg.twist.covariance[14] = 9999.0; // vz
+          odom_msg.twist.covariance[21] = 9999.0; // vroll
+          odom_msg.twist.covariance[28] = 9999.0; // vpitch
          // --- YAYINLA ---
          rcl_publish(&odom_publisher, &odom_msg, NULL);
        }
