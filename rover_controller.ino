@@ -284,7 +284,7 @@ bool create_entities(){
     &subscriber,
     &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-    "cmd_vel"));
+    "cmd_vel_out"));
 
   // create timer (Odometri Yayını için - 50ms = 20Hz)
   const unsigned int timer_timeout = 10; 
