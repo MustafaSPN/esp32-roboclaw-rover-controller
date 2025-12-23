@@ -28,7 +28,7 @@
 // --- ROBOT FİZİKSEL ÖZELLİKLERİ ---
 #define WHEEL_DIA        0.192   // Tekerlek Çapı (Metre)
 #define TRACK_WIDTH      0.495    // İki teker arası mesafe (Metre)
-#define TICKS_PER_REV    145.6  // BİR TURDAKİ TICK SAYISI 
+#define TICKS_PER_REV    751.8  // BİR TURDAKİ TICK SAYISI 145.6 1150 rpm motor için, 751.8 223 rpm motor için
 
 // Otomatik Hesaplanan Değer (Buna dokunma)
 const float TICKS_PER_METER = TICKS_PER_REV / (PI * WHEEL_DIA);
