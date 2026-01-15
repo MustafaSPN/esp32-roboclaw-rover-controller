@@ -17,18 +17,25 @@
 // --- 1. AYARLAR (KONFIGURASYON) ---
 // ==========================================================================
 
-// --- ROBOCLAW VE MOTOR AYARLARI ---
-#define LEFT_MOTOR_IS_M1 false  // true: Sol M1, Sağ M2 | false: Sol M2, Sağ M1
-#define RC_ADDRESS       0x80
-#define RC_BAUDRATE      38400
-#define RX2_PIN          16
-#define TX2_PIN          17
+// --- ROBOCLAW VE MOTOR AYARLARI (4WD - 2 MOTOR DRIVER) ---
+// Motor Driver 1: Sol tekerlekler (Adres 0x80)
+//   - M1: Sol ön tekerlek
+//   - M2: Sol arka tekerlek
+// Motor Driver 2: Sağ tekerlekler (Adres 0x81)
+//   - M1: Sağ ön tekerlek
+//   - M2: Sağ arka tekerlek
+#define RC_LEFT_ADDRESS   0x80   // Sol motor sürücü adresi
+#define RC_RIGHT_ADDRESS  0x81   // Sağ motor sürücü adresi
+#define RC_BAUDRATE       115200 // Baud rate
+#define RX2_PIN           16
+#define TX2_PIN           17
 #define CMD_VEL_TIMEOUT_MS 500
 #define CONNECTED_CHECK_TIMEOUT_MS 1000
+
 // --- ROBOT FİZİKSEL ÖZELLİKLERİ ---
 #define WHEEL_DIA        0.192   // Tekerlek Çapı (Metre)
-#define TRACK_WIDTH      0.495    // İki teker arası mesafe (Metre)
-#define TICKS_PER_REV    751.8  // BİR TURDAKİ TICK SAYISI 145.6 1150 rpm motor için, 751.8 223 rpm motor için
+#define TRACK_WIDTH      0.495   // İki teker arası mesafe (Metre)
+#define TICKS_PER_REV    751.8   // BİR TURDAKİ TICK SAYISI 145.6 1150 rpm motor için, 751.8 223 rpm motor için
 
 // Otomatik Hesaplanan Değer (Buna dokunma)
 const float TICKS_PER_METER = TICKS_PER_REV / (PI * WHEEL_DIA);
@@ -67,18 +74,15 @@ rcl_subscription_t subscriber;
 nav_msgs__msg__Odometry odom_msg;
 geometry_msgs__msg__Twist twist_msg;
 
-// Odometri Durumu
-double x_pos = 0.0;
-double y_pos = 0.0;
-double theta = 0.0;
-
-int32_t last_enc_left = 0;
-int32_t last_enc_right = 0;
-
+// Hız bazlı odometri için değişkenler
 bool isMoving = false;
 
 unsigned long last_cmd_vel_time = 0;
 unsigned long last_connected_check_time = 0;
+
+// Frame ID stringleri (const-safe)
+static char odom_frame[] = "odom";
+static char base_link_frame[] = "base_link";
 
 
 // Durum Makinesi
@@ -109,6 +113,12 @@ void blink_red_neopixel() {
   }
 }
 
+// Tüm motorları durdur (4WD güvenlik fonksiyonu)
+void stop_all_motors() {
+  roboclaw.SpeedM1M2(RC_LEFT_ADDRESS, 0, 0);   // Sol tekerlekler
+  roboclaw.SpeedM1M2(RC_RIGHT_ADDRESS, 0, 0);  // Sağ tekerlekler
+}
+
 // ==========================================================================
 // --- 5. CALLBACKLER VE ODOMETRİ ---
 // ==========================================================================
@@ -121,22 +131,18 @@ void cmd_vel_callback(const void * msgin) {
   float linear_x = msg->linear.x;
   float angular_z = msg->angular.z;
 
+  // Diferansiyel sürüş kinematiği (4WD için aynı formül geçerli)
   float v_left = linear_x - (angular_z * TRACK_WIDTH / 2.0);
   float v_right = linear_x + (angular_z * TRACK_WIDTH / 2.0);
 
   int32_t qpps_left = (int32_t)(v_left * TICKS_PER_METER);
   int32_t qpps_right = (int32_t)(v_right * TICKS_PER_METER);
 
-  // LEFT_MOTOR_IS_M1 ayarına göre motorları sür
-  if(!isMoving){
-    qpps_left *= 10;
-    qpps_right *= 10;
-  }
-  if (LEFT_MOTOR_IS_M1) {
-    roboclaw.SpeedM1M2(RC_ADDRESS, qpps_left, qpps_right);
-  } else {
-    roboclaw.SpeedM1M2(RC_ADDRESS, qpps_right, qpps_left);
-  }
+  // 4WD Motor Kontrolü:
+  // Sol motor sürücü (0x80): M1=sol ön, M2=sol arka - aynı hız
+  // Sağ motor sürücü (0x81): M1=sağ ön, M2=sağ arka - aynı hız
+  roboclaw.SpeedM1M2(RC_LEFT_ADDRESS, qpps_left, qpps_left);   // Sol ön ve arka
+  roboclaw.SpeedM1M2(RC_RIGHT_ADDRESS, qpps_right, qpps_right); // Sağ ön ve arka
 }
 
 void publish_odometry_callback(rcl_timer_t * timer, int64_t last_call_time) {
@@ -144,123 +150,87 @@ void publish_odometry_callback(rcl_timer_t * timer, int64_t last_call_time) {
   if (timer != NULL) {
     
     uint8_t status;
-    bool valid_enc_m1, valid_enc_m2, valid_spd_m1, valid_spd_m2;
+    bool valid_spd_left_front, valid_spd_left_rear, valid_spd_right_front, valid_spd_right_rear;
 
-    // --- 1. SADECE ENCODERLARI OKU (EN KRİTİK VERİ) ---
-    int32_t enc_m1 = roboclaw.ReadEncM1(RC_ADDRESS, &status, &valid_enc_m1);
-    // Kısa bir nefes aldır (Serial buffer tıkanmasın)
-    int32_t enc_m2 = roboclaw.ReadEncM2(RC_ADDRESS, &status, &valid_enc_m2);
-
-    // Eğer Encoderlar geçerliyse, Hızları okumayı dene (Opsiyonel)
-    int32_t spd_m1 = 0;
-    int32_t spd_m2 = 0;
+    // --- HIZ VERİLERİNİ OKU (4WD - Her tekerlek için) ---
+    // Sol motor sürücü (0x80)
+    int32_t spd_left_front = roboclaw.ReadSpeedM1(RC_LEFT_ADDRESS, &status, &valid_spd_left_front);
+    int32_t spd_left_rear = roboclaw.ReadSpeedM2(RC_LEFT_ADDRESS, &status, &valid_spd_left_rear);
     
-    if (valid_enc_m1 && valid_enc_m2) {
-       // Encoderlar sağlamsa hızları da isteyelim
-       spd_m1 = roboclaw.ReadSpeedM1(RC_ADDRESS, &status, &valid_spd_m1);
-       spd_m2 = roboclaw.ReadSpeedM2(RC_ADDRESS, &status, &valid_spd_m2);
-       
-       // --- MAPLEME ---
-       int32_t current_enc_left, current_enc_right;
-       int32_t current_spd_left, current_spd_right;
-       
-       // Hız verisi gelmediyse (valid false ise) 0 kabul et, ama yayını durdurma!
-       if(!valid_spd_m1) spd_m1 = 0; 
-       if(!valid_spd_m2) spd_m2 = 0;
-      
-       if(spd_m1 !=0 || spd_m2 !=0){
-        isMoving = true;
-       }else{
-        isMoving = false;
-       }
-       if (LEFT_MOTOR_IS_M1) {
-          current_enc_left = enc_m1; current_enc_right = enc_m2;
-          current_spd_left = spd_m1; current_spd_right = spd_m2;
-       } else {
-          current_enc_left = enc_m2; current_enc_right = enc_m1;
-          current_spd_left = spd_m2; current_spd_right = spd_m1;
-       }
+    // Sağ motor sürücü (0x81)
+    int32_t spd_right_front = roboclaw.ReadSpeedM1(RC_RIGHT_ADDRESS, &status, &valid_spd_right_front);
+    int32_t spd_right_rear = roboclaw.ReadSpeedM2(RC_RIGHT_ADDRESS, &status, &valid_spd_right_rear);
+    
+    // Hız verisi gelmediyse 0 kabul et
+    if(!valid_spd_left_front) spd_left_front = 0; 
+    if(!valid_spd_left_rear) spd_left_rear = 0;
+    if(!valid_spd_right_front) spd_right_front = 0;
+    if(!valid_spd_right_rear) spd_right_rear = 0;
+   
+    // --- 4WD KİNEMATİK: Her taraf için ortalama hız ---
+    int32_t current_spd_left = (spd_left_front + spd_left_rear) / 2;
+    int32_t current_spd_right = (spd_right_front + spd_right_rear) / 2;
+    
+    // Hareket durumu kontrolü
+    isMoving = (current_spd_left != 0 || current_spd_right != 0);
 
-       // --- HESAPLAMA ---
-       int32_t delta_left = current_enc_left - last_enc_left;
-       int32_t delta_right = current_enc_right - last_enc_right;
+    // --- ZAMAN DAMGASI ---
+    int64_t time_ns = rmw_uros_epoch_nanos();
 
-       // Noise Filter (Ani zıplama koruması)
-       if (abs(delta_left) < 20000 && abs(delta_right) < 20000) {
-         last_enc_left = current_enc_left;
-         last_enc_right = current_enc_right;
+    odom_msg.header.stamp.sec = time_ns / 1000000000;
+    odom_msg.header.stamp.nanosec = time_ns % 1000000000;
 
-         double d_l = (double)delta_left / TICKS_PER_METER;
-         double d_r = (double)delta_right / TICKS_PER_METER;
+    odom_msg.header.frame_id.data = odom_frame;
+    odom_msg.header.frame_id.size = 4;
+    odom_msg.header.frame_id.capacity = 5;
 
-         double d_center = (d_r + d_l) / 2.0;
-         double d_theta = (d_r - d_l) / TRACK_WIDTH;
+    odom_msg.child_frame_id.data = base_link_frame;
+    odom_msg.child_frame_id.size = 9;
+    odom_msg.child_frame_id.capacity = 10;
 
-         if (d_center != 0) {
-           double temp_theta = theta + d_theta / 2.0;
-           x_pos += d_center * cos(temp_theta);
-           y_pos += d_center * sin(temp_theta);
-         }
-         theta += d_theta;
-         
-         if (theta > PI) theta -= 2 * PI;
-         else if (theta < -PI) theta += 2 * PI;
+    // Pozisyon bilgisi yok (sadece hız bazlı odometri)
+    odom_msg.pose.pose.position.x = 0.0;
+    odom_msg.pose.pose.position.y = 0.0;
+    odom_msg.pose.pose.position.z = 0.0;
+    odom_msg.pose.pose.orientation.x = 0.0;
+    odom_msg.pose.pose.orientation.y = 0.0;
+    odom_msg.pose.pose.orientation.z = 0.0;
+    odom_msg.pose.pose.orientation.w = 1.0;
 
-         // --- ZAMAN DAMGASI (OFFSET DÜZELTMELİ) ---
-         int64_t time_ns = rmw_uros_epoch_nanos();
-         // 600ms geri çekme hilesi (Senkronizasyon için)
-         //if(time_ns > 600000000) time_ns -= 600000000; 
-         //else time_ns = 0;
+    // Hız hesaplama (ortalama değerlerden)
+    double v_l_ms = (double)current_spd_left / TICKS_PER_METER;
+    double v_r_ms = (double)current_spd_right / TICKS_PER_METER;
+    
+    odom_msg.twist.twist.linear.x = (v_r_ms + v_l_ms) / 2.0;
+    odom_msg.twist.twist.linear.y = 0.0;
+    odom_msg.twist.twist.linear.z = 0.0;
+    odom_msg.twist.twist.angular.x = 0.0;
+    odom_msg.twist.twist.angular.y = 0.0;
+    odom_msg.twist.twist.angular.z = (v_r_ms - v_l_ms) / TRACK_WIDTH;
 
-         odom_msg.header.stamp.sec = time_ns / 1000000000;
-         odom_msg.header.stamp.nanosec = time_ns % 1000000000;
+    // POSE Covariance - Yüksek değerler (pozisyon bilgisi yok)
+    odom_msg.pose.covariance[0]  = 9999.0; // X - ölçülmüyor
+    odom_msg.pose.covariance[7]  = 9999.0; // Y - ölçülmüyor
+    odom_msg.pose.covariance[14] = 9999.0; // Z - ölçülmüyor
+    odom_msg.pose.covariance[21] = 9999.0; // Roll - ölçülmüyor
+    odom_msg.pose.covariance[28] = 9999.0; // Pitch - ölçülmüyor
+    odom_msg.pose.covariance[35] = 9999.0; // Yaw - ölçülmüyor
 
-         odom_msg.header.frame_id.data = (char*)"odom";
-         odom_msg.header.frame_id.size = 4;
-         odom_msg.header.frame_id.capacity = 5;
+    // TWIST Covariance
+    odom_msg.twist.covariance[0]  = 0.1;    // vx - orta güven
+    odom_msg.twist.covariance[7]  = 9999.0; // vy - ölçülmüyor
+    odom_msg.twist.covariance[14] = 9999.0; // vz - ölçülmüyor
+    odom_msg.twist.covariance[21] = 9999.0; // vroll - ölçülmüyor
+    odom_msg.twist.covariance[28] = 9999.0; // vpitch - ölçülmüyor
+    odom_msg.twist.covariance[35] = 0.5;    // vyaw - düşük güven
 
-         odom_msg.child_frame_id.data = (char*)"base_link";
-         odom_msg.child_frame_id.size = 9;
-         odom_msg.child_frame_id.capacity = 10;
-
-         odom_msg.pose.pose.position.x = x_pos;
-         odom_msg.pose.pose.position.y = y_pos;
-         odom_msg.pose.pose.orientation.z = sin(theta / 2.0);
-         odom_msg.pose.pose.orientation.w = cos(theta / 2.0);
-
-         // Hız verisi her zaman basılır (Okunamazsa 0 gider, ama ODOM AKMAYA DEVAM EDER)
-         double v_l_ms = (double)current_spd_left / TICKS_PER_METER;
-         double v_r_ms = (double)current_spd_right / TICKS_PER_METER;
-         
-         odom_msg.twist.twist.linear.x = (v_r_ms + v_l_ms) / 2.0;
-         odom_msg.twist.twist.linear.y = 0.0;
-         odom_msg.twist.twist.angular.z = (v_r_ms - v_l_ms) / TRACK_WIDTH;
-        // POSE: 9999 hack'ini kaldır. (Pose'u zaten EKF'de fuse etmeyeceksin.)
-          odom_msg.pose.covariance[0]  = 0.0; // X
-          odom_msg.pose.covariance[7]  = 0.0; // Y
-          odom_msg.pose.covariance[14] = 0.0; // Z
-          odom_msg.pose.covariance[21] = 0.0; // Roll
-          odom_msg.pose.covariance[28] = 0.0; // Pitch
-          odom_msg.pose.covariance[35] = 0.0; // Yaw
-
-          // TWIST: sadece güvendiklerin küçük; vy'yi küçük yapma (fuse etmeyeceğiz)
-          odom_msg.twist.covariance[0]  = 0.0025; // vx
-          odom_msg.twist.covariance[7]  = 9999.0; // vy  (0 basıyoruz ama ÖLÇMÜYORUZ)
-          odom_msg.twist.covariance[35] = 0.0025; // vyaw
-
-          // Ölçmediklerimiz
-          odom_msg.twist.covariance[14] = 9999.0; // vz
-          odom_msg.twist.covariance[21] = 9999.0; // vroll
-          odom_msg.twist.covariance[28] = 9999.0; // vpitch
-         // --- YAYINLA ---
-         rcl_publish(&odom_publisher, &odom_msg, NULL);
-       }
-    }
+    // --- YAYINLA (20Hz) ---
+    rcl_publish(&odom_publisher, &odom_msg, NULL);
   }
 }
 
 // ==========================================================================
-// --- 6. ENTITY OLUŞTURMA (SENİN YAPIN) ---
+// --- 6. ENTITY OLUŞTURMA ---
 // ==========================================================================
 
 bool create_entities(){
@@ -287,7 +257,7 @@ bool create_entities(){
     "cmd_vel_out"));
 
   // create timer (Odometri Yayını için - 50ms = 20Hz)
-  const unsigned int timer_timeout = 10; 
+  const unsigned int timer_timeout = 50; 
   RCCHECK(rclc_timer_init_default(
     &timer,
     &support,
@@ -301,7 +271,6 @@ bool create_entities(){
   RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &twist_msg, &cmd_vel_callback, ON_NEW_DATA));
 
   // --- ZAMAN SENKRONİZASYONU ---
-  // Sadece entity oluşturulurken (bağlantı başında) 1 kez yapılır.
   rmw_uros_sync_session(1000);
 
   return true;
@@ -332,7 +301,10 @@ void setup() {
 
   Serial2.begin(RC_BAUDRATE, SERIAL_8N1, RX2_PIN, TX2_PIN);
   roboclaw.begin(RC_BAUDRATE);
-  roboclaw.ResetEncoders(RC_ADDRESS);
+  
+  // Her iki motor sürücünün encoderlarını sıfırla
+  roboclaw.ResetEncoders(RC_LEFT_ADDRESS);
+  roboclaw.ResetEncoders(RC_RIGHT_ADDRESS);
 
   state = WAITING_AGENT;
 }
@@ -359,6 +331,7 @@ void loop() {
     case AGENT_CONNECTED:
       
       if(millis() - last_connected_check_time > CONNECTED_CHECK_TIMEOUT_MS){
+        last_connected_check_time = millis(); // Zamanlayıcıyı güncelle
         EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
         set_led(0, 255, 0); // Yeşil (Bağlı)
       }
@@ -366,13 +339,13 @@ void loop() {
       if (state == AGENT_CONNECTED) {
         rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10));
         if (millis() - last_cmd_vel_time > CMD_VEL_TIMEOUT_MS) {
-             roboclaw.SpeedM1M2(RC_ADDRESS, 0, 0);
+             stop_all_motors(); // 4WD için tüm motorları durdur
         }
       }
       break;
       
     case AGENT_DISCONNECTED:
-      roboclaw.SpeedM1M2(RC_ADDRESS, 0, 0); // Güvenlik: Dur!
+      stop_all_motors(); // Güvenlik: Tüm motorları durdur!
       destroy_entities();
       state = WAITING_AGENT;
       break;
