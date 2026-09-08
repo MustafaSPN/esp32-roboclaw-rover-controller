@@ -1,8 +1,22 @@
 # 🤖 ESP32 RoboClaw Rover Controller
 
-This firmware is developed for the **Pathfinder** autonomous mobile robot. It serves as the low-level hardware interface, bridging the **ROS 2 Humble** network with the **RoboClaw** motor controller via **micro-ROS**.
+**Low-level micro-ROS motor-control interface for ROS 2 mobile robots, using an ESP32-S3 and RoboClaw motor controllers.**
 
-![Micro-ROS](https://img.shields.io/badge/Micro--ROS-Humble-blue) ![ESP32](https://img.shields.io/badge/Board-ESP32-green) ![License](https://img.shields.io/badge/License-MIT-yellow)
+![Micro-ROS](https://img.shields.io/badge/Micro--ROS-Humble-blue) ![ESP32](https://img.shields.io/badge/Board-ESP32--S3-green) ![License](https://img.shields.io/badge/License-MIT-yellow)
+
+This firmware is developed for the **Pathfinder** autonomous mobile robot. It serves as the low-level hardware interface, bridging the **ROS 2 Humble** network with the **RoboClaw** motor controller via **micro-ROS**: it converts incoming `cmd_vel_out` twists into closed-loop wheel velocities and publishes encoder-based odometry back to the ROS 2 stack.
+
+### At a Glance
+
+* **Platform:** ESP32-S3 running micro-ROS (Humble), connected to a `micro_ros_agent` host over USB serial.
+* **Motor control:** Differential-drive kinematics converted to RoboClaw velocity (QPPS) commands, closed-loop on the driver's internal PID.
+* **Odometry:** `nav_msgs/msg/Odometry` published on `odom_esp` at 20 Hz, with variant-specific covariance.
+* **Fail-safe:** 500 ms `cmd_vel_out` timeout stops the motors, plus automatic agent reconnection without rebooting the board.
+* **Variants:** 2WD (position + velocity odometry), 4WD (velocity odometry), and a standalone WiFi demo.
+
+## 🔗 Related Project
+
+This controller is used as the low-level motor-control interface in the [**Pathfinder**](https://github.com/MustafaSPN/pathfinder) autonomous rover platform, where it is included as the `esp32-controller` submodule and its `odom_esp` output feeds the higher-level localization and Nav2 navigation stack.
 
 ## 📁 Firmware Variants
 
@@ -201,4 +215,4 @@ To compile this code, you need the following libraries installed in Arduino IDE 
 
 ---
 
-**Project:** Pathfinder AMR
+**Project:** [Pathfinder AMR](https://github.com/MustafaSPN/pathfinder)
